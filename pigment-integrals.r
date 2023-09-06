@@ -1,222 +1,189 @@
+# packages
 library("tidyverse")
-library("fda.usc")
+library("fda.usc") # for approximate integration
 library("RColorBrewer")
 library("viridis")
 
-# wd of data ====
+#% LOAD DATA
+
+# wd of data
 wdir <- "data/"
 
-# load absorption data ====
-abs.dat <- read.csv(paste0(wdir, "pigs-abs.csv")) %>%
-  mutate(abs = ifelse(abs < 0, 0, abs)) %>%
-  group_by(Pigment) %>%
-  summarise(interp = as.data.frame(approx(lambda, abs, xout = 400:700))) %>%
-  unnest(interp) %>%
-  rename(Lambda = x, Absorption = y) %>%
-  ungroup %>%
-  mutate(Absorption = Absorption/max(Absorption, na.rm = TRUE)) %>%
-  as.data.frame
+# range of wavelengths to include throughout
+lamrange <- 400:900
 
-# define a colour palette for the pigments for later
-pig.cols <- setNames(brewer.pal(3, "Dark2"), unique(abs.dat$Pigment))
+# load absorption data
+abs_dat <- read.csv(paste0(wdir, "pigs-abs.csv")) %>%
+    mutate(abs = ifelse(abs < 0, 0, abs)) %>%
+    group_by(Pigment) %>%
+    nest(dat = lambda:abs) %>%
+    rowwise %>%
+    mutate(dat = list(as.data.frame(
+        approx(dat$lambda, dat$abs, xout = lamrange))
+        )) %>%
+    unnest(dat) %>%
+    rename(Lambda = x, Absorption = y) %>%
+    ungroup %>%
+    mutate(Absorption = Absorption / max(Absorption, na.rm = TRUE))
 
-# load flourescence data ====
-flo.dat <- read.csv(paste0(wdir, "pigs-emm.csv")) %>%
-  mutate(emm = ifelse(emm < 0, 0, emm)) %>%
-  group_by(pigment) %>%
-  summarise(interp = as.data.frame(approx(lambda, emm, xout = 400:900))) %>%
-  unnest(interp) %>%
-  rename(Lambda = x, Flourescence = y, Pigment = pigment) %>%
-  ungroup %>%
-  mutate(Flourescence = Flourescence/max(Flourescence, na.rm = TRUE)) %>%
-  as.data.frame
+# load flourescence data
+em_dat <- read.csv(paste0(wdir, "pigs-em.csv")) %>%
+    mutate(em = ifelse(em < 0, 0, em)) %>%
+    group_by(pigment) %>%
+    nest(dat = lambda:em) %>%
+    rowwise %>%
+    mutate(dat = list(as.data.frame(
+        approx(dat$lambda, dat$em, xout = lamrange))
+        )) %>%
+    unnest(dat) %>%
+    rename(Lambda = x, Flourescence = y, Pigment = pigment) %>%
+    ungroup %>%
+    mutate(Flourescence = Flourescence / max(Flourescence, na.rm = TRUE))
 
-# merge ====
-absflo.dat <- full_join(abs.dat, flo.dat) %>%
-  pivot_longer(Absorption:Flourescence, names_to = "Type", values_to = "Value") %>% 
-  na.omit
+# merge
+absem_dat <- full_join(abs_dat, em_dat) %>%
+    pivot_longer(Absorption:Flourescence,
+        names_to = "Type", values_to = "Value") %>%
+    na.omit
 
-absflo.annot <- absflo.dat %>%
-  dplyr::select(Type) %>% 
-  distinct %>% 
-  mutate(Label = LETTERS[1:2])
+# lasers
+lasers_dat <- read.csv(paste0(wdir, "lasers.csv"))
 
-## lasers ====
-lasers.dat <- read.csv(paste0(wdir, "lasers.csv"))
+# cytometer channels
+channels_dat <- read.csv(paste0(wdir, "channels.csv")) %>%
+    rowwise %>%
+    mutate(ID = paste(Receptor, substring(Laser, 1, 1),
+        collapse = "", sep = "-"))
 
-## cytometer channels ====
-channels.dat <- read.csv(paste0(wdir, "channels.csv")) %>%
-  rowwise %>% 
-  mutate(ID = paste(Receptor, substring(Laser, 1, 1), collapse = "", sep = "-")) 
+# define colour palettes
 
-### channel plot colours =====
-channels.cols <- setNames(viridis(nrow(channels.dat)), sort(channels.dat$ID))
+# pigments
+pig_cols <- setNames(brewer.pal(3, "Dark2"), unique(abs_dat$Pigment))
 
-#### plot ====
+# channels
+channels_cols <- setNames(viridis(nrow(channels_dat)), sort(channels_dat$ID))
+
+#% PLOT PIGMENTS, LASERS, AND CHANNELS
+
 ggplot() +
-  geom_rect(data = channels.dat,
-            aes(xmin = LambdaCentre - LambdaPM,
-              xmax = LambdaCentre + LambdaPM,
-                fill = ID, ymin = 0, ymax = 2),
-                alpha = .2, color = "grey50", lty = 2) +
-  geom_vline(data = lasers.dat,
-    aes(xintercept = Lambda),
-    col = c("blue", "red"), lwd = 1) +
-  geom_line(data = absflo.dat,
-            aes(x = Lambda, y = Value, lty = Type, col = Pigment), lwd = 1) +
-  geom_label(data = lasers.dat, aes(x = Lambda, y = 1.1, label = Laser)) +
-  coord_cartesian(ylim = c(0, 1.2), expand = 0) +
-  scale_fill_manual(values = channels.cols) +
-  scale_color_manual(values = pig.cols) +
-  theme_bw() +
-  labs(y = "Absorption/flourescence",
-       fill = "Cytometer channel",
-       lty = "Type") +
-  scale_y_continuous(breaks = seq(0, 1, len = 5))
+    # rectangle for channel bandwidths
+    geom_rect(data = channels_dat,
+        aes(xmin = LambdaCentre - LambdaPM,
+            xmax = LambdaCentre + LambdaPM,
+            fill = ID, ymin = 0, ymax = 2),
+        alpha = .2, color = "grey50", lty = 2) +
+    # vertical lines for channel lasers
+    geom_vline(data = lasers_dat,
+        aes(xintercept = Lambda),
+        col = c("blue", "red"), lwd = 1) +
+    # lines for different pigments abs and em
+    geom_line(data = absem_dat,
+        aes(x = Lambda, y = Value, lty = Type, col = Pigment),
+        lwd = 1) +
+    geom_label(data = lasers_dat, aes(x = Lambda, y = 1.1, label = Laser)) +
+    coord_cartesian(ylim = c(0, 1.2), expand = 0) +
+    scale_fill_manual(values = channels_cols) +
+    scale_color_manual(values = pig_cols) +
+    theme_bw() +
+    labs(y = "Absorption/flourescence",
+        fill = "Cytometer channel",
+        lty = "Type") +
+    scale_y_continuous(breaks = seq(0, 1, len = 5))
 
-ggsave("outputs/lasers_channels_pigments.pdf", width = 8, height = 5, units = "in")
+ggsave("outputs/lasers_channels_pigments.pdf",
+    width = 8, height = 5, units = "in")
 
-# APPROXIMATE INTEGRATION USING SIMPSONS METHOD
+#% FOR EACH CYTO CHANNEL, COMPUTE THE EXCITATION OF EACH PIGMENT
 
+channels_lasers <- left_join(channels_dat, lasers_dat) %>%
+    left_join(abs_dat, relationship = "many-to-many") %>%
+    dplyr::select(-LambdaCentre, -LambdaPM) %>%
+    # bc this is a relative scale, it's useful now to scale by the maximum value
+    ungroup %>%
+    mutate(Absorption = Absorption / max(Absorption))
 
+#% FOR EACH CHANNEL, COMPUTE THE ABSORPTION FOR EACH PIGMENT
 
-pigments <- function() {
+# get the bandwidth as a logical vector
+channels_bw <- channels_dat %>%
+    mutate(
+        lambda_min = LambdaCentre - LambdaPM,
+        lambda_max = LambdaCentre + LambdaPM,
+        lambda_range = list(lamrange),
+        in_bandwidth = list(lambda_min:lambda_max),
+        logical_lambda = list(lambda_range %in% in_bandwidth),
+        Lambda = list(data.frame(
+            Lambda = lambda_range, BW = logical_lambda))
+        ) %>%
+    dplyr::select(ID, Laser, Receptor, Lambda) %>%
+    unnest(Lambda)
+
+# combine that with the emission spectra
+channels_abs <- full_join(channels_bw, em_dat,
+        relationship = "many-to-many") %>%
+    arrange(ID, Pigment, Lambda) %>%
+    dplyr::filter(BW) %>%
+    na.omit %>%
+    # we don't care about the actual maximum flourescence, only the flourescence by channel
+    group_by(ID) #%>%
+    # mutate(Flourescence = Flourescence / max(Flourescence))
+
+#% PLOTTING 
+
+ggplot(channels_abs) +
+    aes(x = Lambda, y = Flourescence, col = ID, lty = Pigment) +
+    geom_line(linewidth = 1) +
+    facet_wrap(.~Laser, nrow = 2) +
+    geom_point(data = channels_abs %>%
+        group_by(Pigment, ID) %>%
+        dplyr::filter(Lambda == min(Lambda) | Lambda == max(Lambda)),
+        pch = 1, size = 5) +
+    theme_bw() +
+    labs(title = "Proportion of maximum flourescence captured by the channel bands",
+        caption = "Circles indicate the ends of the channel bands")
+
+# approx integral of each channel
+channel_pig_abs <- channels_abs %>%
+    group_by(ID, Laser, Receptor, BW, Pigment) %>%
+    summarise(int_ind = int.simpson2(Lambda, Flourescence)) %>%
+    group_by(ID) %>%
+    mutate(int_ind = int_ind / max(int_ind))
+
+ggplot(channel_pig_abs) +
+    aes(x = ID, y = int_ind, fill = Pigment) +
+    geom_col(width = 0.25,
+        position = position_dodge(width = 0.5, preserve = "single")) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+    theme_bw() +
+    labs(title = "Proportion of integral that is due to each pigment",
+        caption = "This does not take differences in excitation into account")
+
+#% SUMMARISE, FOR EACH CHANNEL, THE TOTAL ABSORPTION FOR EACH PIGMENT
+
+channel_pig_totabs <- channel_pig_abs %>%
+    group_by(ID, Laser, Receptor, BW) %>%
+    summarise(int_tot = sum(int_ind)) %>%
+    ungroup %>%
+    mutate(int_tot = int_tot / max(int_tot))
+
+#% FOR EACH CHANNEL, GET THE RELATIVE EXCITATION * ABSORPTION FOR EACH PIGMENT
+
+# rescale
+channel_pig_relabs <- left_join(channel_pig_abs, channel_pig_totabs) %>%
+    rowwise %>%
+    mutate(int_rel = int_ind * int_tot)
+
+ggplot(channel_pig_relabs) +
+    aes(x = ID, y = int_rel, fill = Pigment) +
+    geom_col(width = 0.25, 
+        position = position_dodge(width = 0.5, preserve = "single")) +
+    scale_y_sqrt(expand = expansion(mult = c(0, 0.05))) +
+    theme_bw()
+
+# % CONSTRUCT FUNCTION
+
+pigmentation <- function(channels...) {
 
 }
 
-# load data ====
-abs.dat <- read.csv(paste0(wdir, "pigs-abs.csv"))
-
-## define a colour palette for the pigments for later
-pig.cols <- setNames(brewer.pal(3, "Dark2"), unique(abs.dat$Pigment))
-
-## fix data ====
-abs.out <- abs.dat %>%
-  mutate(abs = ifelse(abs < 0, 0, abs)) %>%
-  group_by(Pigment) %>%
-  summarise(interp = as.data.frame(approx(lambda, abs, xout = 400:700))) %>%
-  unnest(interp) %>%
-  rename(Lambda = x, Absorption = y) %>%
-  as.data.frame
-
-# load data ====
-flo.dat <- read.csv(paste0(wdir, "pigs-emm.csv"))
-
-## fix data ====
-flo.out <- flo.dat %>%
-  mutate(emm = ifelse(emm < 0, 0, emm)) %>%
-  group_by(pigment) %>%
-  summarise(interp = as.data.frame(approx(lambda, emm, xout = 400:900))) %>%
-  unnest(interp) %>%
-  rename(Lambda = x, Flourescence = y, Pigment = pigment) %>%
-  as.data.frame
-
-lasers.dat <- read.csv(paste0(wdir, "lasers.csv"))
-
-## cytometer channels ====
-channels.dat <- read.csv(paste0(wdir, "channels.csv")) %>% 
-  rowwise %>% 
-  mutate(ID = paste(Receptor, substring(Laser, 1, 1), collapse = "", sep = "-"))
-
-### finter abs spec by laser wavelength ====
-lasers.dat.full <- abs.out %>%
-  right_join(lasers.dat, by = "Lambda") %>% 
-  as_tibble
-
-#### plot ====
-ggplot(lasers.dat.full, aes(x = Pigment, y = Absorption, fill = Laser)) + 
-  geom_col(position = position_dodge(), col = "black") +
-  scale_fill_manual(values = c("Red" = "Red", "Blue" = "Navy")) + 
-  theme_bw() +
-  coord_cartesian(ylim = c(0,1), xlim = c(.5,3.5), expand = 0) + 
-  labs(y = "Proportion of maximum excitation",
-       fill = "Cytometer\nlaser") +
-  theme(legend.position = c(0.87, 0.73), # bottom right
-        legend.background = element_rect(fill = NA, color = NA),
-        legend.box.background = element_rect(fill = "white", color = "black"))
-
-# create range of detection by the cytometer ====
-channels.dat.full <- channels.dat %>% 
-  group_by(Laser, Receptor, ID) %>%
-  mutate(LMin = LambdaCentre - LambdaPM,
-         Lmax = LambdaCentre + LambdaPM) %>%
-  summarise(Lambda = list(LMin:Lmax)) %>%
-  unnest(Lambda) %>%
-  group_by(ID) %>%
-  group_split()
-
-# integrate total detection ====
-integrated.totals <- lapply(channels.dat.full, function(i) {
-  lamb <- i$Lambda
-  laser <- unique(i$Laser)
-  receptor <- unique(i$Receptor)
-  id <- unique(i$ID)
-  
-  out <- flo.out %>%
-    group_by(Pigment) %>%
-    mutate(Flourescence = Flourescence / sum(Flourescence, na.rm = T)) %>%
-    dplyr::filter(Lambda %in% lamb) %>%
-    na.omit %>%
-    summarise(int.tot = int.simpson2(Lambda, Flourescence)) %>%
-    mutate(Laser = laser, Receptor = receptor, ID = id)
-}) %>%
-  bind_rows()
-
-# plot ====
-ggplot(data = integrated.totals %>% 
-         dplyr::filter(Pigment %in% names(pig.cols),
-                       ID %in% names(channels.cols))) +
-  aes(x = Pigment, y = int.tot, fill = ID) +
-  geom_col(position = position_dodge(), col = "black") +
-  scale_fill_manual(values = channels.cols) +
-  theme_bw() +
-  coord_cartesian(ylim = c(0,1.5), xlim = c(.5,3.5), expand = 0) + 
-  labs(y = "Proportion of detected flourescence",
-       fill = "Cytometer\nchannel") +
-  theme(legend.position = c(0.5, 0.8),
-        legend.direction = "horizontal",
-        legend.background = element_rect(fill = NA, color = NA),
-        legend.box.background = element_rect(fill = "white", color = "black"))
-
-## combined ====
-combined.totals <- full_join(lasers.dat.full, integrated.totals) %>%
-  mutate(Detection = Absorption * int.tot) 
-
-### plot ====
-ggplot(combined.totals %>% 
-         dplyr::filter(Pigment %in% names(pig.cols),
-                       ID %in% names(channels.cols))) +
-  aes(x = Pigment, y = Detection, fill = ID) +
-  geom_col(position = position_dodge(), col = "black") +
-  theme_bw() +
-  scale_fill_manual(values = channels.cols) +
-  coord_cartesian(ylim = c(0,1), xlim = c(.5,3.5), expand = 0) + 
-  labs(y = "Detection x excitation",
-       fill = "Cytometer\nchannel") +
-  theme(legend.position = c(0.5, 0.8),
-        legend.direction = "horizontal",
-        legend.background = element_rect(fill = NA, color = NA),
-        legend.box.background = element_rect(fill = "white", color = "black"))
-
-# load data ====
-spec.dat <- read.csv(paste0(wdir, "species-pigments.csv")) %>%
-  pivot_longer(cols = Chlorophyll:Phycoerythrin, names_to = "Pigment", values_to = "Conc") %>%
-  mutate(strain = as.factor(ifelse(PigmentType == "VIII", "2434", "2524")),
-         strain2 = as.factor(ifelse(PigmentType == "VIII", "2383", "2375"))) 
-
-# plot amount of each pigment by species ====
-ggplot(spec.dat) +
-  aes(x = Pigment, y = Conc, fill = strain, pattern_fill = strain2) + 
-  ggpattern::geom_col_pattern(
-    position = position_dodge(), col = 1, show.legend = FALSE,
-    pattern_size = 0, pattern_density = 0.5) + 
-  theme_bw() + 
-  scale_fill_manual(values = s_pal) +
-  ggpattern::scale_pattern_fill_manual(values = s_pal) +
-  coord_cartesian(xlim = c(.5, 3.5), ylim = c(0,10), expand = 0) +
-  labs(fill = NULL, pattern_fill = NULL,
-       y = expression("Approximate pigment concentration (pg"%.%"cell"^-1*")")) +
-  theme(legend.position = c(0.5, 0.9),
-        legend.direction = "horizontal",
-        legend.background = element_rect(fill = NA, color = NA),
-        legend.box.background = element_rect(fill = "white", color = "black"))
+# % TEST DATA TO SEE 

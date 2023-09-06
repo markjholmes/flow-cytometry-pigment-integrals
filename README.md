@@ -30,4 +30,10 @@ Therefore we calculate $\rho_A$ using the existing data and substitute in the va
 
 ---
 
+Some of the excitation x emission values for different pigments in the same channel are quite close, but the impact of this is reduced by the differences in pigmentations of the species involved. 
+
+For example, Red-R represents both chlorophyll and phycocyanin quite well, however, both species should have quite similar concentrations of chlorophyll, while one species has far more phycoerythrin than the other.
+
+---
+
 *Note:* this makes the assumption that we measure all absorbed light equally across the bandwidth which I doubt is true but it's not the end of the world and is still better than just using the individual values that the band is centred around.
