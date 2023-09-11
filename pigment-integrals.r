@@ -3,6 +3,7 @@ library("tidyverse")
 library("fda.usc") # for approximate integration
 library("RColorBrewer")
 library("viridis")
+library("ggh4x")
 
 #% LOAD DATA
 
@@ -193,12 +194,10 @@ weights <- channel_pig_relabs %>%
 write.csv(weights, "data/weights.csv", row.names = FALSE)
 
 pdf("outputs/heatmap.pdf", width = 9, height = 7)
-
 column_to_rownames(.data = weights, "channel") %>%
-    as.matrix %>% 
+    as.matrix %>%
     t %>%
     heatmap(margins = c(10, 10))
-
 dev.off()
 
 # % DEMONSTRATION
@@ -239,3 +238,36 @@ ggplot(dat %>%
     stat_summary(geom = "pointrange", fun.data = mean_se,
         position = position_dodge(width = 0.33)) +
     theme_bw()
+
+# compare to null
+p <- egg::ggarrange(
+
+    ggplot(dat) +
+        aes(x = RED.B, y = Chlorophyll, col = strain) +
+        facet_grid2(. ~ treat, scales = "free", independent = TRUE) +
+        geom_abline(intercept = 0, slope = 1) +
+        geom_point() +
+        theme_bw() +
+        scale_color_discrete(guide = "none"),
+
+    ggplot(dat) +
+        aes(x = RED.R, y = Phycocyanin, col = strain) +
+        facet_grid2(. ~ treat, scales = "free", independent = TRUE) +
+        geom_abline(intercept = 0, slope = 1) +
+        geom_point() +
+        theme_bw() +
+        labs(col = "Strain"),
+
+    ggplot(dat) +
+        aes(x = YEL.B, y = Phycoerythrin, col = strain) +
+        facet_grid2(. ~ treat, scales = "free", independent = TRUE) +
+        geom_abline(intercept = 0, slope = 1) +
+        geom_point() +
+        theme_bw() +
+        scale_color_discrete(guide = "none"),
+
+        nrow = 3
+)
+
+ggsave("outputs/effect_of_variable_transformation.pdf", p,
+    width = 6.5 * 1.5, height = 4 * 1.5, units = "in")
