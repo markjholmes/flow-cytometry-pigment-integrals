@@ -95,12 +95,7 @@ ggsave("outputs/lasers_channels_pigments.pdf",
 
 #% FOR EACH CYTO CHANNEL, COMPUTE THE EXCITATION OF EACH PIGMENT
 
-channels_lasers <- left_join(channels_dat, lasers_dat) %>%
-    left_join(abs_dat, relationship = "many-to-many") %>%
-    dplyr::select(-LambdaCentre, -LambdaPM) %>%
-    # bc this is a relative scale, it's useful now to scale by the maximum value
-    ungroup %>%
-    mutate(Absorption = Absorption / max(Absorption))
+channels_lasers <- left_join(lasers_dat, abs_dat)
 
 #% FOR EACH CHANNEL, COMPUTE THE ABSORPTION FOR EACH PIGMENT
 
@@ -128,7 +123,7 @@ channels_abs <- full_join(channels_bw, em_dat,
     group_by(ID) #%>%
     # mutate(Flourescence = Flourescence / max(Flourescence))
 
-#% PLOTTING 
+#% PLOTTING
 
 ggplot(channels_abs) +
     aes(x = Lambda, y = Flourescence, col = ID, lty = Pigment) +
@@ -139,15 +134,15 @@ ggplot(channels_abs) +
         dplyr::filter(Lambda == min(Lambda) | Lambda == max(Lambda)),
         pch = 1, size = 5) +
     theme_bw() +
-    labs(title = "Proportion of maximum flourescence captured by the channel bands",
+    labs(title = "Proportion of max. flourescence captured by the channels",
         caption = "Circles indicate the ends of the channel bands")
 
 # approx integral of each channel
 channel_pig_abs <- channels_abs %>%
     group_by(ID, Laser, Receptor, BW, Pigment) %>%
-    summarise(int_ind = int.simpson2(Lambda, Flourescence)) %>%
-    group_by(ID) %>%
-    mutate(int_ind = int_ind / max(int_ind))
+    summarise(int_ind = int.simpson2(Lambda, Flourescence))# %>%
+    # group_by(ID) %>%
+    # mutate(int_ind = int_ind / sum(int_ind))
 
 ggplot(channel_pig_abs) +
     aes(x = ID, y = int_ind, fill = Pigment) +
@@ -158,32 +153,89 @@ ggplot(channel_pig_abs) +
     labs(title = "Proportion of integral that is due to each pigment",
         caption = "This does not take differences in excitation into account")
 
-#% SUMMARISE, FOR EACH CHANNEL, THE TOTAL ABSORPTION FOR EACH PIGMENT
-
-channel_pig_totabs <- channel_pig_abs %>%
-    group_by(ID, Laser, Receptor, BW) %>%
-    summarise(int_tot = sum(int_ind)) %>%
-    ungroup %>%
-    mutate(int_tot = int_tot / max(int_tot))
-
 #% FOR EACH CHANNEL, GET THE RELATIVE EXCITATION * ABSORPTION FOR EACH PIGMENT
 
 # rescale
-channel_pig_relabs <- left_join(channel_pig_abs, channel_pig_totabs) %>%
+channel_pig_relabs <- left_join(channel_pig_abs, channels_lasers) %>%
+    rename(Excitation = Absorption, Flourescence = int_ind) %>%
     rowwise %>%
-    mutate(int_rel = int_ind * int_tot)
+    mutate(Relative_Flourescence = Flourescence * Excitation)
+
+# this is disgusting
+RA_max <- max(channel_pig_relabs$Relative_Flourescence)
+
+channel_pig_relabs$Relative_Flourescence <- 
+    channel_pig_relabs$Relative_Flourescence / RA_max
 
 ggplot(channel_pig_relabs) +
-    aes(x = ID, y = int_rel, fill = Pigment) +
-    geom_col(width = 0.25, 
+    aes(x = ID, y = Relative_Flourescence, fill = Pigment) +
+    geom_col(width = 0.5,
         position = position_dodge(width = 0.5, preserve = "single")) +
-    scale_y_sqrt(expand = expansion(mult = c(0, 0.05))) +
+    theme_bw() +
+    scale_y_sqrt(expand = expansion(mult = c(0, 0.05)))
+
+ggsave("outputs/flourescence_scaled_by_excitation.pdf",
+    width = 8, height = 5, units = "in")
+
+# basically we're going to use this to compute weighted means
+    # e.g., chlorophyll is the mean chlorophyll across all channels weighted by
+    # how much it flouresces in each channel
+
+# final data for use in model
+weights <- channel_pig_relabs %>%
+    rename(channel = ID, pigment = Pigment, weight = Relative_Flourescence) %>%
+    ungroup %>%
+    dplyr::select(channel, pigment, weight) %>%
+    tidyr::complete(channel, pigment, fill = list(weight = 0)) %>%
+    arrange(channel, pigment) %>%
+    pivot_wider(names_from = pigment, values_from = weight)
+
+write.csv(weights, "data/weights.csv", row.names = FALSE)
+
+pdf("outputs/heatmap.pdf", width = 9, height = 7)
+
+column_to_rownames(.data = weights, "channel") %>%
+    as.matrix %>% 
+    t %>%
+    heatmap(margins = c(10, 10))
+
+dev.off()
+
+# % DEMONSTRATION
+
+# data to test on
+dat <- readRDS("data/final-pops-mon.RData") %>%
+    dplyr::filter(date < 11) %>%
+    dplyr::select(date.time, date, strain, species,
+            treat, repl, pop, contains("av.")) %>%
+        rename_with(~ gsub("av.", "", .x, fixed = TRUE),
+            starts_with("av")) %>%
+    dplyr::select(date.time, date, strain, species,
+        treat, repl, pop, FSC, SSC, sort(colnames(.))) %>%
+    # do i need to standardise across the channels?
+    rowwise %>%
+    mutate(Chlorophyll = weighted.mean(
+            c(GRN.B, NIR.B, NIR.R, RED.B, RED.R, YEL.B),
+            weights$Chlorophyll),
+        Phycocyanin = weighted.mean(
+            c(GRN.B, NIR.B, NIR.R, RED.B, RED.R, YEL.B),
+            weights$Phycocyanin),
+        Phycoerythrin = weighted.mean(
+            c(GRN.B, NIR.B, NIR.R, RED.B, RED.R, YEL.B),
+            weights$Phycoerythrin)
+        )
+
+ggplot(dat %>%
+    dplyr::select(date.time:pop, Chlorophyll:Phycoerythrin) %>%
+    mutate(pop = log10(pop)) %>%
+    pivot_longer(pop:Phycoerythrin) %>%
+    mutate(name = factor(name,
+        levels = c("pop", "Chlorophyll", "Phycocyanin", "Phycoerythrin"),
+        labels = c("Population", "Chlorophyll", "Phycocyanin", "Phycoerythrin"))
+        )) +
+    scale_x_continuous() +
+    aes(x = date, y = value, col = strain) +
+    facet_grid(name ~ treat, scales = "free") +
+    stat_summary(geom = "pointrange", fun.data = mean_se,
+        position = position_dodge(width = 0.33)) +
     theme_bw()
-
-# % CONSTRUCT FUNCTION
-
-pigmentation <- function(channels...) {
-
-}
-
-# % TEST DATA TO SEE 
