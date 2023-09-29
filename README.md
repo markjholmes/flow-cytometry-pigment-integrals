@@ -10,6 +10,7 @@
   3. scale these by the amount of excitation for each pigment per channel
   4. calculate the weighted mean of the pigment using the relative excitation-flourescence as weights
 - in theory we should arrive at some function like `pigments(GRN.B, NIR.B, NIR.R, RED.B, RED.R, YEL.B)` returning the expected relative concentrations of each pigment and the "total pigmentation" so that these relative quantities can be turned into absolute-ish quantities
+
 <!-- 
 ## Example
 
